@@ -39,6 +39,19 @@ hover — light and dark shown below:
 - Sandboxed, with persisted folder access via security-scoped bookmarks.
 - Free, no trial, no in-app purchase.
 
+## First launch (unsigned build)
+
+This app isn't notarized by Apple (no paid Developer ID account behind it
+yet), so macOS Gatekeeper blocks the first launch. One-time fix after
+unzipping — self-signs the app ad-hoc and clears the quarantine flag in one
+command:
+
+```bash
+xattr -cr /path/to/FolderBar.app && codesign --force --deep -s - /path/to/FolderBar.app
+```
+
+Then open the app normally. This only needs to run once per download.
+
 ## Build
 
 CI builds a universal (arm64 + x86_64) `.app` on every push via GitHub
