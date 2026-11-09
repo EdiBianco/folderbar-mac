@@ -197,9 +197,13 @@ final class FolderStatusItem: NSObject {
     }
 
     private func navigateInto(_ url: URL) {
+        // url may be a Finder alias pointing at the folder — drill into
+        // what it points to, not the alias file itself (which isn't a
+        // directory FileManager can list).
+        let target = resolvedTarget(url)
         navStack.append(currentURL ?? rootURL!)
-        currentURL = url
-        startWatching(url)
+        currentURL = target
+        startWatching(target)
         rebuildRows()
     }
 
