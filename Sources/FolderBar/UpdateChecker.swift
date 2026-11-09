@@ -29,7 +29,7 @@ enum UpdateChecker {
                 if latestVersion.isNewer(than: currentVersion) {
                     presentUpdateAvailable(version: latestVersion, downloadURL: downloadURL)
                 } else {
-                    presentUpToDate()
+                    presentUpToDate(version: currentVersion)
                 }
             }
         }.resume()
@@ -46,9 +46,10 @@ enum UpdateChecker {
         }
     }
 
-    private static func presentUpToDate() {
+    private static func presentUpToDate(version: String) {
         let alert = NSAlert()
         alert.messageText = "You're up to date"
+        alert.informativeText = "FolderBar \(version)"
         alert.runModal()
     }
 
