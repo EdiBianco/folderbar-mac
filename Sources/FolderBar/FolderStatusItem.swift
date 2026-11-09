@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// One menu-bar item backed by one watched folder. Left-click shows a
 /// translucent, tinted glass panel (NSPopover + NSVisualEffectView — a plain
@@ -28,7 +29,7 @@ final class FolderStatusItem: NSObject {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
-        statusItem.button?.image = NSImage(systemSymbolName: config.symbolName, accessibilityDescription: config.displayName)
+        applyIcon()
         statusItem.button?.toolTip = config.displayName
         statusItem.button?.target = self
         statusItem.button?.action = #selector(handleClick)
@@ -103,6 +104,11 @@ final class FolderStatusItem: NSObject {
     /// giving left- and right-click different presentations on one item.
     private func showContextMenu() {
         let menu = NSMenu()
+
+        let customize = NSMenuItem(title: "Customize Icon…", action: nil, keyEquivalent: "")
+        customize.submenu = makeIconSubmenu()
+        menu.addItem(customize)
+
         let change = NSMenuItem(title: "Change Source Folder…", action: #selector(changeSourceFolder), keyEquivalent: "")
         change.target = self
         menu.addItem(change)
@@ -112,6 +118,108 @@ final class FolderStatusItem: NSObject {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    // MARK: Icon customization
+
+    /// (title, SF Symbol name) presets covering the standard macOS user
+    /// folders plus a handful of common project/content categories.
+    private static let iconPresets: [(title: String, symbol: String)] = [
+        ("Applications", "square.grid.2x2.fill"),
+        ("Desktop", "menubar.dock.rectangle"),
+        ("Documents", "doc.fill"),
+        ("Downloads", "arrow.down.circle.fill"),
+        ("Personal", "person.fill"),
+        ("Library", "building.columns.fill"),
+        ("Music", "music.note"),
+        ("Movies", "film.fill"),
+        ("Pictures", "photo.fill"),
+        ("Public", "globe"),
+        ("Work", "briefcase.fill"),
+        ("Projects", "hammer.fill"),
+        ("Code", "chevron.left.forwardslash.chevron.right"),
+        ("Design", "paintbrush.fill"),
+        ("Archive", "archivebox.fill"),
+        ("Cloud", "icloud.fill"),
+        ("Favorites", "star.fill"),
+        ("Default Folder", "folder"),
+    ]
+
+    private func makeIconSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let isCustom = config.customIconData != nil
+        for preset in Self.iconPresets {
+            let item = NSMenuItem(title: preset.title, action: #selector(selectPresetIcon(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.symbol
+            item.image = NSImage(systemSymbolName: preset.symbol, accessibilityDescription: nil)
+            item.state = (!isCustom && config.symbolName == preset.symbol) ? .on : .off
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let choose = NSMenuItem(title: "Choose Image…", action: #selector(chooseCustomIcon), keyEquivalent: "")
+        choose.target = self
+        choose.state = isCustom ? .on : .off
+        submenu.addItem(choose)
+        return submenu
+    }
+
+    @objc private func selectPresetIcon(_ sender: NSMenuItem) {
+        guard let symbol = sender.representedObject as? String else { return }
+        config.symbolName = symbol
+        config.customIconData = nil
+        applyIcon()
+        onChange?()
+    }
+
+    @objc private func chooseCustomIcon() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Menu Bar Icon"
+        panel.message = "Pick a square, monochrome image with a transparent "
+            + "background — it's shown as a template icon, so only its "
+            + "shape matters (color is ignored and it auto-adapts to light/"
+            + "dark menu bars). PNG recommended, at least 36×36px; it will "
+            + "be resized to fit the menu bar automatically."
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .gif, .bmp]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let source = NSImage(contentsOf: url),
+              let data = Self.normalizedIconData(from: source) else { return }
+
+        config.customIconData = data
+        applyIcon()
+        onChange?()
+    }
+
+    private func applyIcon() {
+        if let data = config.customIconData, let image = NSImage(data: data) {
+            image.isTemplate = true
+            statusItem.button?.image = image
+        } else {
+            statusItem.button?.image = NSImage(systemSymbolName: config.symbolName, accessibilityDescription: config.displayName)
+        }
+    }
+
+    /// Renders an arbitrary source image down to a fixed 36×36px (18pt @2x)
+    /// template icon and re-encodes it as PNG, so stored config data stays
+    /// small regardless of how large the user's original image was.
+    private static func normalizedIconData(from source: NSImage) -> Data? {
+        let pixelSize = 36
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixelSize, pixelsHigh: pixelSize,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        rep.size = NSSize(width: pixelSize, height: pixelSize)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        source.draw(in: NSRect(x: 0, y: 0, width: pixelSize, height: pixelSize),
+                    from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep.representation(using: .png, properties: [:])
     }
 
     // MARK: Content

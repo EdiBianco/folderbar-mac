@@ -31,7 +31,8 @@ hover — light and dark shown below:
   step.
 - **Folders first, drill-in navigation** — click into a subfolder in place,
   a "Back" row takes you up; folders are always grouped ahead of files.
-- **Right-click a folder icon** for **Change Source Folder…** or **Remove**,
+- **Right-click a folder icon** for **Customize Icon…** (pick from system-folder
+  presets or upload your own), **Change Source Folder…**, or **Remove**,
   without disturbing the normal left-click listing.
 - **Open at Login** toggle (via `SMAppService`, no legacy helper bundle).
 - **About panel** with version and author, plus **Check for Updates…**
