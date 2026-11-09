@@ -119,6 +119,7 @@ final class FolderStatusItem: NSObject {
     private func rebuildRows() {
         guard let dir = currentURL ?? rootURL else {
             glassView.reload(showsBack: false, entries: [], onBack: {}, onSelect: { _, _ in }, onReveal: {})
+            popover.contentSize = glassView.frame.size
             return
         }
 
@@ -144,6 +145,11 @@ final class FolderStatusItem: NSObject {
             },
             onReveal: { [weak self] in self?.revealCurrent() }
         )
+        // NSPopover doesn't observe its content view's frame after first
+        // display — without this, a smaller next directory leaves the view
+        // anchored at the bottom of the still-larger old window, i.e. a
+        // blank gap up top (exactly the broken layout seen after navigating).
+        popover.contentSize = glassView.frame.size
     }
 
     private func isDirectory(_ url: URL) -> Bool {
