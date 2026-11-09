@@ -82,6 +82,15 @@ final class FolderRowView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        clearHighlight()
+    }
+
+    /// Scroll-wheel scrolling moves rows under a stationary cursor, which
+    /// generates no mouse-moved event — so AppKit never gets a chance to
+    /// re-evaluate which row the mouse is now over, and a row can stay
+    /// "hovered" after it has visually scrolled away. Called directly by the
+    /// enclosing scroll view's bounds-change handler to force a reset.
+    func clearHighlight() {
         highlight.layer?.backgroundColor = NSColor.clear.cgColor
         titleLabel.textColor = .labelColor
         chevron?.contentTintColor = .secondaryLabelColor
@@ -197,6 +206,12 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         scroll.documentView = content
         effectView.addSubview(scroll)
 
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(scrollBoundsDidChange),
+            name: NSView.boundsDidChangeNotification, object: scroll.contentView
+        )
+
         bottomSeparator.wantsLayer = true
         bottomSeparator.layer?.backgroundColor = NSColor.separatorColor.cgColor
         effectView.addSubview(bottomSeparator)
@@ -206,6 +221,14 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func scrollBoundsDidChange() {
+        for row in entryRows { row.clearHighlight() }
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
