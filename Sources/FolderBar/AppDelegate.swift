@@ -25,6 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controlItem.button?.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: "FolderBar")
 
         let menu = NSMenu()
+
+        let header = NSMenuItem()
+        header.attributedTitle = NSAttributedString(
+            string: "FolderBar",
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
+        )
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
         menu.addItem(withTitle: "Add Folder…", action: #selector(addFolder), keyEquivalent: "")
         let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         loginItem.target = self
