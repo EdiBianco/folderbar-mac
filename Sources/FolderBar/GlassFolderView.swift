@@ -312,12 +312,14 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
             y += Self.rowSpacing + 4
         }
 
-        func addGroup(_ caption: String, _ group: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)]) {
+        func addGroup(_ caption: String?, _ group: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)]) {
             guard !group.isEmpty else { return }
-            let label = captionLabel(caption)
-            label.frame = NSRect(x: 16, y: y, width: Self.width - 32, height: 14)
-            content.addSubview(label)
-            y += 22
+            if let caption {
+                let label = captionLabel(caption)
+                label.frame = NSRect(x: 16, y: y, width: Self.width - 32, height: 14)
+                content.addSubview(label)
+                y += 22
+            }
 
             for entry in group {
                 let row = FolderRowView(icon: entry.icon, title: entry.title, showsChevron: entry.isDirectory,
@@ -340,8 +342,7 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
             content.addSubview(empty)
             y += 28
         } else {
-            addGroup(folderCaption, entries.filter { $0.isDirectory })
-            addGroup("Files", entries.filter { !$0.isDirectory })
+            addGroup(folderCaption, entries)
         }
 
         content.frame = NSRect(x: 0, y: 0, width: Self.width, height: y + 6)
