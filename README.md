@@ -21,7 +21,7 @@ A translucent, tinted glass panel (not a stock `NSMenu`) with a live filter
 field, folders grouped ahead of files, and a rounded accent-blue highlight on
 hover — light and dark shown below:
 
-![FolderBar glass panel mockup](docs/mockup.jpg)
+<img src="docs/mockup.jpg" width="100%" alt="FolderBar glass panel mockup — light and dark">
 
 ## Features
 
