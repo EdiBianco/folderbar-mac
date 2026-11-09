@@ -1,17 +1,27 @@
 import AppKit
 
-/// One menu-bar item backed by one watched folder. A kqueue watch on the
-/// current directory's FD invalidates the cached listing only when that
-/// directory actually changes, so re-opening the menu is normally a cheap
-/// redisplay of already-current items, not a guaranteed syscall storm.
-final class FolderStatusItem: NSObject, NSMenuDelegate {
+/// One menu-bar item backed by one watched folder. Left-click shows a
+/// translucent, tinted glass panel (NSPopover + NSVisualEffectView — a plain
+/// NSMenu has no way to carry a custom tint) listing the current directory;
+/// right-click shows a plain native context menu to change or remove the
+/// folder. A kqueue watch on the current directory's FD invalidates the
+/// cached listing only when that directory actually changes.
+final class FolderStatusItem: NSObject {
     private(set) var config: FolderConfig
     private let statusItem: NSStatusItem
+    private let popover = NSPopover()
+    private let glassView = GlassFolderView(frame: NSRect(x: 0, y: 0, width: GlassFolderView.width, height: 1))
+
     private var rootURL: URL?
     private var currentURL: URL?
     private var navStack: [URL] = []
     private var watcher: DispatchSourceFileSystemObject?
     private var needsReload = true
+
+    /// Set by AppDelegate: persist after a source-folder change, and remove
+    /// this item from its tracked list (plus re-persist) after Remove.
+    var onChange: (() -> Void)?
+    var onRemove: (() -> Void)?
 
     init(config: FolderConfig) {
         self.config = config
@@ -20,10 +30,15 @@ final class FolderStatusItem: NSObject, NSMenuDelegate {
 
         statusItem.button?.image = NSImage(systemSymbolName: config.symbolName, accessibilityDescription: config.displayName)
         statusItem.button?.toolTip = config.displayName
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(handleClick)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        popover.behavior = .transient
+        let controller = NSViewController()
+        controller.view = glassView
+        popover.contentViewController = controller
+        glassView.onSearch = { [weak self] text in self?.glassView.filter(text) }
 
         openFolder()
     }
@@ -58,85 +73,77 @@ final class FolderStatusItem: NSObject, NSMenuDelegate {
         watcher = source
     }
 
-    // MARK: NSMenuDelegate
+    // MARK: Click routing
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard rootURL != nil else {
-            menu.removeAllItems()
-            menu.addItem(withTitle: "Folder unavailable", action: nil, keyEquivalent: "")
-            return
+    @objc private func handleClick() {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePopover()
         }
-        // Bug fix: this used to be a single `guard needsReload, let folderURL`
-        // — when needsReload was already false (the common case on every
-        // open after the first) the guard failed and fell into an `else`
-        // branch that called menu.removeAllItems() with nothing to replace
-        // it, so every click after the first showed an empty menu. The two
-        // conditions are independent: a missing root folder always needs
-        // the "unavailable" message; an unchanged folder should just keep
-        // showing what's already there.
-        guard needsReload else { return }
-        needsReload = false
-        rebuild(menu)
     }
 
-    private func rebuild(_ menu: NSMenu) {
-        menu.removeAllItems()
+    private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        if needsReload {
+            needsReload = false
+            rebuildRows()
+        }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
 
-        let search = SearchMenuItemView()
-        search.onChange = { [weak self] text in self?.applyFilter(text) }
-        let searchItem = NSMenuItem()
-        searchItem.view = search
-        menu.addItem(searchItem)
-        menu.addItem(.separator())
+    /// NSStatusItem shows `.menu` instead of dispatching the button's action
+    /// whenever `.menu` is non-nil, so this is set only for the duration of
+    /// the programmatic click that displays it — the standard idiom for
+    /// giving left- and right-click different presentations on one item.
+    private func showContextMenu() {
+        let menu = NSMenu()
+        let change = NSMenuItem(title: "Change Source Folder…", action: #selector(changeSourceFolder), keyEquivalent: "")
+        change.target = self
+        menu.addItem(change)
+        let remove = NSMenuItem(title: "Remove", action: #selector(removeFolder), keyEquivalent: "")
+        remove.target = self
+        menu.addItem(remove)
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
 
-        if !navStack.isEmpty {
-            let back = NSMenuItem(title: "⬅ Back", action: #selector(goBack), keyEquivalent: "")
-            back.target = self
-            menu.addItem(back)
+    // MARK: Content
+
+    private func rebuildRows() {
+        guard let dir = currentURL ?? rootURL else {
+            glassView.reload(showsBack: false, entries: [], onBack: {}, onSelect: { _, _ in }, onReveal: {})
+            return
         }
 
-        let dir = currentURL ?? rootURL!
         let keys: [URLResourceKey] = [.nameKey, .contentModificationDateKey, .creationDateKey, .isDirectoryKey]
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
 
         let directories = entries.filter { isDirectory($0) }
         let files = entries.filter { !isDirectory($0) }
-
-        // Folders first, each group sorted by the configured mode.
         let ordered = sort(directories, mode: config.sortMode, reversed: config.reversed)
             + sort(files, mode: config.sortMode, reversed: config.reversed)
 
-        if ordered.isEmpty {
-            menu.addItem(withTitle: "No content", action: nil, keyEquivalent: "")
-        }
-        for url in ordered {
-            let item = NSMenuItem(
-                title: url.lastPathComponent,
-                action: isDirectory(url) ? #selector(navigateInto(_:)) : #selector(openEntry(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = url
-            item.image = NSWorkspace.shared.icon(forFile: url.path)
-            menu.addItem(item)
+        let rowData = ordered.map { url in
+            (title: url.lastPathComponent, icon: NSWorkspace.shared.icon(forFile: url.path), isDirectory: isDirectory(url), url: url)
         }
 
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Reveal in Finder", action: #selector(revealCurrent), keyEquivalent: "")
-        for item in menu.items where item.action != nil && item.target == nil {
-            item.target = self
-        }
-    }
-
-    /// Hides entries whose name doesn't match; non-entry rows (search field,
-    /// Back, separators, Reveal) are left alone.
-    private func applyFilter(_ text: String) {
-        guard let menu = statusItem.menu else { return }
-        let query = text.lowercased()
-        for item in menu.items where item.representedObject is URL {
-            item.isHidden = !(query.isEmpty || item.title.lowercased().contains(query))
-        }
+        glassView.reload(
+            showsBack: !navStack.isEmpty,
+            entries: rowData,
+            onBack: { [weak self] in self?.goBack() },
+            onSelect: { [weak self] url, isDir in
+                if isDir { self?.navigateInto(url) } else { self?.openEntry(url) }
+            },
+            onReveal: { [weak self] in self?.revealCurrent() }
+        )
     }
 
     private func isDirectory(_ url: URL) -> Bool {
@@ -162,28 +169,55 @@ final class FolderStatusItem: NSObject, NSMenuDelegate {
         return reversed ? sorted.reversed() : sorted
     }
 
-    @objc private func navigateInto(_ sender: NSMenuItem) {
-        guard let url = sender.representedObject as? URL else { return }
+    private func navigateInto(_ url: URL) {
         navStack.append(currentURL ?? rootURL!)
         currentURL = url
-        needsReload = true
         startWatching(url)
+        rebuildRows()
     }
 
-    @objc private func goBack() {
+    private func goBack() {
         guard let previous = navStack.popLast() else { return }
         currentURL = previous
-        needsReload = true
         startWatching(previous)
+        rebuildRows()
     }
 
-    @objc private func openEntry(_ sender: NSMenuItem) {
-        guard let url = sender.representedObject as? URL else { return }
+    private func openEntry(_ url: URL) {
         NSWorkspace.shared.open(url)
+        popover.performClose(nil)
     }
 
-    @objc private func revealCurrent() {
+    private func revealCurrent() {
         guard let url = currentURL ?? rootURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+        popover.performClose(nil)
+    }
+
+    // MARK: Context menu actions
+
+    @objc private func changeSourceFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bookmark = BookmarkStore.shared.makeBookmark(for: url) else { return }
+
+        rootURL?.stopAccessingSecurityScopedResource()
+        config.bookmarkData = bookmark
+        config.displayName = url.lastPathComponent
+        navStack.removeAll()
+        needsReload = true
+        statusItem.button?.toolTip = config.displayName
+        openFolder()
+        onChange?()
+    }
+
+    @objc private func removeFolder() {
+        watcher?.cancel()
+        rootURL?.stopAccessingSecurityScopedResource()
+        NSStatusBar.system.removeStatusItem(statusItem)
+        onRemove?()
     }
 }

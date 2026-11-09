@@ -5,8 +5,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controlItem: NSStatusItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        folderItems = BookmarkStore.shared.load().map(FolderStatusItem.init)
+        folderItems = BookmarkStore.shared.load().map(makeFolderItem)
         setUpControlItem()
+    }
+
+    private func makeFolderItem(config: FolderConfig) -> FolderStatusItem {
+        let item = FolderStatusItem(config: config)
+        item.onChange = { [weak self] in self?.persist() }
+        item.onRemove = { [weak self] in
+            guard let self else { return }
+            folderItems.removeAll { $0 === item }
+            persist()
+        }
+        return item
     }
 
     private func setUpControlItem() {
@@ -48,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let bookmark = BookmarkStore.shared.makeBookmark(for: url) else { return }
 
         let config = FolderConfig(bookmarkData: bookmark, displayName: url.lastPathComponent)
-        folderItems.append(FolderStatusItem(config: config))
+        folderItems.append(makeFolderItem(config: config))
         persist()
     }
 
