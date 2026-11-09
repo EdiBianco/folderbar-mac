@@ -14,6 +14,9 @@ final class FolderRowView: NSView {
 
     let titleText: String
     var onClick: (() -> Void)?
+    /// Lets the enclosing view track just the one hovered row (O(1) to
+    /// clear on scroll) instead of sweeping every row on each scroll tick.
+    var onHoverChange: ((Bool) -> Void)?
 
     init(icon: NSImage?, title: String, showsChevron: Bool, highlightColor: NSColor = .controlAccentColor, url: URL? = nil) {
         titleText = title
@@ -76,24 +79,36 @@ final class FolderRowView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        highlight.layer?.backgroundColor = highlightColor.cgColor
-        titleLabel.textColor = .white
-        chevron?.contentTintColor = .white
+        setHighlighted(true)
+        onHoverChange?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        clearHighlight()
+        setHighlighted(false)
+        onHoverChange?(false)
     }
 
     /// Scroll-wheel scrolling moves rows under a stationary cursor, which
     /// generates no mouse-moved event — so AppKit never gets a chance to
     /// re-evaluate which row the mouse is now over, and a row can stay
     /// "hovered" after it has visually scrolled away. Called directly by the
-    /// enclosing scroll view's bounds-change handler to force a reset.
+    /// enclosing view when it knows this was the hovered row, so only one
+    /// row's layer gets touched per scroll, not every row in the list.
     func clearHighlight() {
-        highlight.layer?.backgroundColor = NSColor.clear.cgColor
-        titleLabel.textColor = .labelColor
-        chevron?.contentTintColor = .secondaryLabelColor
+        setHighlighted(false)
+    }
+
+    private func setHighlighted(_ highlighted: Bool) {
+        // Disable the implicit CALayer fade: this can run many times during
+        // a single scroll gesture (clip-view bounds notifications fire per
+        // tick), and an animated color change per tick is wasted work and
+        // looks like a flicker rather than an instant, crisp state change.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        highlight.layer?.backgroundColor = (highlighted ? highlightColor : .clear).cgColor
+        CATransaction.commit()
+        titleLabel.textColor = highlighted ? .white : .labelColor
+        chevron?.contentTintColor = highlighted ? .white : .secondaryLabelColor
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -161,6 +176,11 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
     private static let rowSpacing: CGFloat = 32
     private static let searchAreaHeight: CGFloat = 40
     private static let revealHeight: CGFloat = 34
+    /// Extra right-side clearance for rows *inside the scroll view* so a
+    /// visible scroller (overlay or legacy) draws past the row's rounded
+    /// highlight instead of covering its right edge/corner.
+    private static let scrollerGutter: CGFloat = 10
+    private static let scrolledRowWidth: CGFloat = width - 12 - scrollerGutter
 
     private let effectView = NSVisualEffectView()
     private let tintView = NSView()
@@ -173,8 +193,22 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
                                            title: "Reveal in Finder", showsChevron: false,
                                            highlightColor: GlassFolderView.accentBlue)
     private var entryRows: [FolderRowView] = []
+    /// The one row currently showing hover highlight, if any — tracked so a
+    /// scroll only has to clear this single row instead of walking the list.
+    private weak var hoveredRow: FolderRowView?
 
     var onSearch: ((String) -> Void)?
+
+    private func trackHover(_ row: FolderRowView) {
+        row.onHoverChange = { [weak self, weak row] isHovering in
+            guard let self, let row else { return }
+            if isHovering {
+                hoveredRow = row
+            } else if hoveredRow === row {
+                hoveredRow = nil
+            }
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -227,7 +261,8 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
     }
 
     @objc private func scrollBoundsDidChange() {
-        for row in entryRows { row.clearHighlight() }
+        hoveredRow?.clearHighlight()
+        hoveredRow = nil
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -268,8 +303,9 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         if showsBack {
             let back = FolderRowView(icon: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil),
                                       title: "Back", showsChevron: false, highlightColor: Self.accentBlue)
-            back.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: Self.rowHeight)
+            back.frame = NSRect(x: 6, y: y, width: Self.scrolledRowWidth, height: Self.rowHeight)
             back.onClick = onBack
+            trackHover(back)
             content.addSubview(back)
             y += Self.rowSpacing + 4
         }
@@ -284,8 +320,9 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
             for entry in group {
                 let row = FolderRowView(icon: entry.icon, title: entry.title, showsChevron: entry.isDirectory,
                                          highlightColor: Self.accentBlue, url: entry.url)
-                row.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: Self.rowHeight)
+                row.frame = NSRect(x: 6, y: y, width: Self.scrolledRowWidth, height: Self.rowHeight)
                 row.onClick = { onSelect(entry.url, entry.isDirectory) }
+                trackHover(row)
                 content.addSubview(row)
                 entryRows.append(row)
                 y += Self.rowSpacing
