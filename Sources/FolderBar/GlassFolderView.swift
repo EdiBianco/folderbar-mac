@@ -284,11 +284,13 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         for row in entryRows { row.isHidden = !row.matches(query) }
     }
 
-    /// Rebuilds the row list for a (possibly new) directory: folders grouped
-    /// under a "FOLDERS" caption ahead of files under "FILES", matching the
-    /// mockup rather than one flat undifferentiated list.
+    /// Rebuilds the row list for a (possibly new) directory: subfolders
+    /// grouped under the current directory's own name ahead of files under
+    /// "FILES", matching the mockup rather than one flat undifferentiated
+    /// list.
     func reload(
         showsBack: Bool,
+        folderCaption: String,
         entries: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)],
         onBack: @escaping () -> Void,
         onSelect: @escaping (URL, Bool) -> Void,
@@ -338,7 +340,7 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
             content.addSubview(empty)
             y += 28
         } else {
-            addGroup("Folders", entries.filter { $0.isDirectory })
+            addGroup(folderCaption, entries.filter { $0.isDirectory })
             addGroup("Files", entries.filter { !$0.isDirectory })
         }
 

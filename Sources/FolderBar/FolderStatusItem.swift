@@ -118,7 +118,7 @@ final class FolderStatusItem: NSObject {
 
     private func rebuildRows() {
         guard let dir = currentURL ?? rootURL else {
-            glassView.reload(showsBack: false, entries: [], onBack: {}, onSelect: { _, _ in }, onReveal: {})
+            glassView.reload(showsBack: false, folderCaption: "Folders", entries: [], onBack: {}, onSelect: { _, _ in }, onReveal: {})
             popover.contentSize = glassView.frame.size
             return
         }
@@ -141,6 +141,7 @@ final class FolderStatusItem: NSObject {
 
         glassView.reload(
             showsBack: !navStack.isEmpty,
+            folderCaption: dir.lastPathComponent,
             entries: rowData,
             onBack: { [weak self] in self?.goBack() },
             onSelect: { [weak self] url, isDir in
