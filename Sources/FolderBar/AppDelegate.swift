@@ -35,7 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Add Folder…", action: #selector(addFolder), keyEquivalent: "")
+        let addFolderItem = NSMenuItem(title: "Add Folder…", action: #selector(addFolder), keyEquivalent: "")
+        addFolderItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
+        menu.addItem(addFolderItem)
         let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = LoginItem.isEnabled ? .on : .off
