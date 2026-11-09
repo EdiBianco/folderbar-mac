@@ -7,12 +7,14 @@ final class FolderRowView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let highlight = NSView()
     private var trackingArea: NSTrackingArea?
+    private let highlightColor: NSColor
 
     let titleText: String
     var onClick: (() -> Void)?
 
-    init(icon: NSImage?, title: String, showsChevron: Bool) {
+    init(icon: NSImage?, title: String, showsChevron: Bool, highlightColor: NSColor = .controlAccentColor) {
         titleText = title
+        self.highlightColor = highlightColor
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -65,7 +67,7 @@ final class FolderRowView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        highlight.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        highlight.layer?.backgroundColor = highlightColor.cgColor
         titleLabel.textColor = .white
         chevron?.contentTintColor = .white
     }
@@ -81,29 +83,49 @@ final class FolderRowView: NSView {
     }
 }
 
+/// Small uppercase section header ("FOLDERS" / "FILES"), matching the mockup.
+private func captionLabel(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: "")
+    let attributed = NSMutableAttributedString(string: text.uppercased())
+    attributed.addAttribute(.kern, value: 0.4, range: NSRange(location: 0, length: attributed.length))
+    label.attributedStringValue = attributed
+    label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+    label.textColor = .secondaryLabelColor
+    label.isBordered = false
+    label.isEditable = false
+    label.drawsBackground = false
+    return label
+}
+
 /// Top-down document view for the scroll area (AppKit's default bottom-left
 /// origin makes a "first row at the top" list awkward to reason about).
 private final class TopDownView: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// The glass panel itself: a tinted `NSVisualEffectView` with a search field,
-/// a scrolling row list, and a persistent "Reveal in Finder" row — the real
-/// implementation of the look the mockup promised, replacing the flat
-/// default `NSMenu` chrome (which has no way to carry a custom tint).
+/// The glass panel itself: a tinted, bordered `NSVisualEffectView` with a
+/// search field, section-grouped rows (folders ahead of files, as in the
+/// mockup), and a persistent "Reveal in Finder" row.
 final class GlassFolderView: NSView, NSSearchFieldDelegate {
     static let width: CGFloat = 300
     static let maxListHeight: CGFloat = 320
+    /// The mockup's fixed accent blue, used for row selection regardless of
+    /// the user's system accent color — matches the approved design exactly.
+    static let accentBlue = NSColor(red: 0x0a / 255.0, green: 0x84 / 255.0, blue: 0xff / 255.0, alpha: 1)
+
     private static let searchAreaHeight: CGFloat = 38
     private static let revealHeight: CGFloat = 30
 
     private let effectView = NSVisualEffectView()
     private let tintView = NSView()
     private let searchField = NSSearchField()
+    private let topSeparator = NSView()
+    private let bottomSeparator = NSView()
     private let scroll = NSScrollView()
     private let content = TopDownView()
     private let revealRow = FolderRowView(icon: NSImage(systemSymbolName: "star", accessibilityDescription: nil),
-                                           title: "Reveal in Finder", showsChevron: false)
+                                           title: "Reveal in Finder", showsChevron: false,
+                                           highlightColor: GlassFolderView.accentBlue)
     private var entryRows: [FolderRowView] = []
 
     var onSearch: ((String) -> Void)?
@@ -118,25 +140,45 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         effectView.wantsLayer = true
         effectView.layer?.cornerRadius = 14
         effectView.layer?.masksToBounds = true
+        effectView.layer?.borderWidth = 1
         addSubview(effectView)
 
         tintView.wantsLayer = true
-        tintView.layer?.backgroundColor = NSColor(calibratedRed: 0.42, green: 0.42, blue: 0.95, alpha: 0.08).cgColor
+        tintView.layer?.backgroundColor = NSColor(calibratedRed: 0.42, green: 0.42, blue: 0.95, alpha: 0.10).cgColor
         effectView.addSubview(tintView)
 
         searchField.placeholderString = "Filter…"
         searchField.delegate = self
         effectView.addSubview(searchField)
 
+        topSeparator.wantsLayer = true
+        topSeparator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        effectView.addSubview(topSeparator)
+
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.documentView = content
         effectView.addSubview(scroll)
 
+        bottomSeparator.wantsLayer = true
+        bottomSeparator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        effectView.addSubview(bottomSeparator)
+
         effectView.addSubview(revealRow)
+        updateBorderColor()
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBorderColor()
+    }
+
+    private func updateBorderColor() {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        effectView.layer?.borderColor = NSColor(white: 1, alpha: isDark ? 0.14 : 0.6).cgColor
+    }
 
     func controlTextDidChange(_ obj: Notification) {
         onSearch?(searchField.stringValue)
@@ -147,8 +189,9 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         for row in entryRows { row.isHidden = !row.matches(query) }
     }
 
-    /// Rebuilds the row list for a (possibly new) directory. Folders are
-    /// expected to already be ordered ahead of files by the caller.
+    /// Rebuilds the row list for a (possibly new) directory: folders grouped
+    /// under a "FOLDERS" caption ahead of files under "FILES", matching the
+    /// mockup rather than one flat undifferentiated list.
     func reload(
         showsBack: Bool,
         entries: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)],
@@ -160,15 +203,34 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         entryRows = []
         searchField.stringValue = ""
 
-        var y: CGFloat = 4
+        var y: CGFloat = 6
 
         if showsBack {
             let back = FolderRowView(icon: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil),
-                                      title: "Back", showsChevron: false)
+                                      title: "Back", showsChevron: false, highlightColor: Self.accentBlue)
             back.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: 26)
             back.onClick = onBack
             content.addSubview(back)
-            y += 28
+            y += 30
+        }
+
+        func addGroup(_ caption: String, _ group: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)]) {
+            guard !group.isEmpty else { return }
+            let label = captionLabel(caption)
+            label.frame = NSRect(x: 14, y: y, width: Self.width - 28, height: 14)
+            content.addSubview(label)
+            y += 20
+
+            for entry in group {
+                let row = FolderRowView(icon: entry.icon, title: entry.title, showsChevron: entry.isDirectory,
+                                         highlightColor: Self.accentBlue)
+                row.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: 26)
+                row.onClick = { onSelect(entry.url, entry.isDirectory) }
+                content.addSubview(row)
+                entryRows.append(row)
+                y += 27
+            }
+            y += 4
         }
 
         if entries.isEmpty {
@@ -179,14 +241,8 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
             content.addSubview(empty)
             y += 24
         } else {
-            for entry in entries {
-                let row = FolderRowView(icon: entry.icon, title: entry.title, showsChevron: entry.isDirectory)
-                row.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: 26)
-                row.onClick = { onSelect(entry.url, entry.isDirectory) }
-                content.addSubview(row)
-                entryRows.append(row)
-                y += 27
-            }
+            addGroup("Folders", entries.filter { $0.isDirectory })
+            addGroup("Files", entries.filter { !$0.isDirectory })
         }
 
         content.frame = NSRect(x: 0, y: 0, width: Self.width, height: y + 4)
@@ -202,7 +258,9 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         effectView.frame = bounds
         tintView.frame = bounds
         searchField.frame = NSRect(x: 10, y: totalHeight - 32, width: Self.width - 20, height: 22)
+        topSeparator.frame = NSRect(x: 8, y: totalHeight - Self.searchAreaHeight, width: Self.width - 16, height: 1)
         scroll.frame = NSRect(x: 0, y: Self.revealHeight, width: Self.width, height: listHeight)
+        bottomSeparator.frame = NSRect(x: 8, y: Self.revealHeight, width: Self.width - 16, height: 1)
         revealRow.frame = NSRect(x: 6, y: 2, width: Self.width - 12, height: 26)
     }
 }
