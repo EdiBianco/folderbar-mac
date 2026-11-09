@@ -1,0 +1,49 @@
+name: Build macOS app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            | tar xz -C /usr/local/bin gitleaks
+          # Scan the full repo state directly rather than a push before/after
+          # diff range — that range can reference a commit a force-push just
+          # dropped, which fails the job for reasons unrelated to secrets.
+          gitleaks detect --source . --no-banner -v
+
+  build:
+    needs: gitleaks
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal binary
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Assemble .app bundle
+        run: |
+          APP=FolderBar.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp .build/apple/Products/Release/FolderBar "$APP/Contents/MacOS/FolderBar"
+          cp Resources/Info.plist "$APP/Contents/Info.plist"
+          cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep -s - \
+            --entitlements Resources/FolderBar.entitlements \
+            "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" FolderBar-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FolderBar-macOS
+          path: FolderBar-macOS.zip

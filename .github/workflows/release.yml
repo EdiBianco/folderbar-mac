@@ -1,0 +1,37 @@
+name: Release macOS app
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal binary
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Assemble .app bundle
+        run: |
+          APP=FolderBar.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp .build/apple/Products/Release/FolderBar "$APP/Contents/MacOS/FolderBar"
+          cp Resources/Info.plist "$APP/Contents/Info.plist"
+          cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep -s - \
+            --entitlements Resources/FolderBar.entitlements \
+            "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" FolderBar-macOS.zip
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" FolderBar-macOS.zip \
+            --title "FolderBar ${{ github.ref_name }}" \
+            --generate-notes
