@@ -71,12 +71,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .credits: NSAttributedString(
-                string: "Edi Bianco",
-                attributes: [.font: NSFont.systemFont(ofSize: 11)]
-            )
-        ])
+
+        let font = NSFont.systemFont(ofSize: 11)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+
+        let credits = NSMutableAttributedString(
+            string: "Edi Bianco\n",
+            attributes: [.font: font, .paragraphStyle: paragraph]
+        )
+        credits.append(NSAttributedString(
+            string: "Source: GitHub",
+            attributes: [
+                .font: font,
+                .paragraphStyle: paragraph,
+                .link: URL(string: "https://github.com/EdiBianco/folderbar-mac")!,
+            ]
+        ))
+
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
     private func persist() {
