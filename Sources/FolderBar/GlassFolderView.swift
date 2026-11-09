@@ -91,7 +91,7 @@ private final class TopDownView: NSView {
 /// a scrolling row list, and a persistent "Reveal in Finder" row — the real
 /// implementation of the look the mockup promised, replacing the flat
 /// default `NSMenu` chrome (which has no way to carry a custom tint).
-final class GlassFolderView: NSView, NSTextFieldDelegate {
+final class GlassFolderView: NSView, NSSearchFieldDelegate {
     static let width: CGFloat = 300
     static let maxListHeight: CGFloat = 320
     private static let searchAreaHeight: CGFloat = 38
