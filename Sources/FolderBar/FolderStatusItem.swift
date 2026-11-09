@@ -136,7 +136,7 @@ final class FolderStatusItem: NSObject {
             + sort(files, mode: config.sortMode, reversed: config.reversed)
 
         let rowData = ordered.map { url in
-            (title: url.lastPathComponent, icon: NSWorkspace.shared.icon(forFile: url.path), isDirectory: isNavigableFolder(url), url: url)
+            (title: url.lastPathComponent, icon: NSWorkspace.shared.icon(forFile: resolvedTarget(url).path), isDirectory: isNavigableFolder(url), url: url)
         }
 
         glassView.reload(
@@ -164,7 +164,16 @@ final class FolderStatusItem: NSObject {
     }
 
     private func isNavigableFolder(_ url: URL) -> Bool {
-        isDirectory(url) && !isApplication(url)
+        let target = resolvedTarget(url)
+        return isDirectory(target) && !isApplication(target)
+    }
+
+    // Finder alias files (not plain symlinks) are regular files on disk —
+    // .isDirectoryKey on the alias itself is always false, so without
+    // resolving them they show up as generic "files" with a generic icon
+    // instead of their target's folder/app icon.
+    private func resolvedTarget(_ url: URL) -> URL {
+        (try? URL(resolvingAliasFileAt: url)) ?? url
     }
 
     private func sort(_ urls: [URL], mode: SortMode, reversed: Bool) -> [URL] {
