@@ -1,20 +1,24 @@
 import AppKit
 
 /// One clickable row (folder, file, or "Back"): icon, title, optional
-/// chevron, rounded accent-color highlight on hover.
+/// chevron, rounded accent-color highlight on hover. Rows backed by a real
+/// file (`url != nil`) get the standard Open / Show in Finder / Move to
+/// Trash context menu on right-click.
 final class FolderRowView: NSView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let highlight = NSView()
     private var trackingArea: NSTrackingArea?
     private let highlightColor: NSColor
+    private let url: URL?
 
     let titleText: String
     var onClick: (() -> Void)?
 
-    init(icon: NSImage?, title: String, showsChevron: Bool, highlightColor: NSColor = .controlAccentColor) {
+    init(icon: NSImage?, title: String, showsChevron: Bool, highlightColor: NSColor = .controlAccentColor, url: URL? = nil) {
         titleText = title
         self.highlightColor = highlightColor
+        self.url = url
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -47,11 +51,11 @@ final class FolderRowView: NSView {
 
     override func layout() {
         super.layout()
-        highlight.frame = bounds.insetBy(dx: 4, dy: 1)
-        iconView.frame = NSRect(x: 10, y: (bounds.height - 16) / 2, width: 16, height: 16)
-        let chevronWidth: CGFloat = chevron != nil ? 20 : 8
-        titleLabel.frame = NSRect(x: 32, y: (bounds.height - 16) / 2, width: bounds.width - 32 - chevronWidth, height: 16)
-        chevron?.frame = NSRect(x: bounds.width - 18, y: (bounds.height - 12) / 2, width: 10, height: 12)
+        highlight.frame = bounds.insetBy(dx: 4, dy: 2)
+        iconView.frame = NSRect(x: 12, y: (bounds.height - 16) / 2, width: 16, height: 16)
+        let chevronWidth: CGFloat = chevron != nil ? 22 : 10
+        titleLabel.frame = NSRect(x: 34, y: (bounds.height - 16) / 2, width: bounds.width - 34 - chevronWidth, height: 16)
+        chevron?.frame = NSRect(x: bounds.width - 20, y: (bounds.height - 12) / 2, width: 10, height: 12)
     }
 
     func matches(_ query: String) -> Bool {
@@ -61,7 +65,12 @@ final class FolderRowView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        // .inVisibleRect keeps the tracking rect synced to the row's
+        // on-screen position as the scroll view moves it — without it,
+        // AppKit doesn't re-evaluate mouse-in/out during a scroll, so rows
+        // that scrolled out from under the cursor stay stuck "highlighted"
+        // (the "fake selection artifact" while scrolling).
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area)
         trackingArea = area
     }
@@ -80,6 +89,32 @@ final class FolderRowView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         onClick?()
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let url else { return nil }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Open", action: #selector(contextOpen), keyEquivalent: "")
+        menu.addItem(withTitle: "Show in Finder", action: #selector(contextReveal), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Move to Trash", action: #selector(contextTrash), keyEquivalent: "")
+        for item in menu.items { item.target = self }
+        return menu
+    }
+
+    @objc private func contextOpen() {
+        guard let url else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func contextReveal() {
+        guard let url else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func contextTrash() {
+        guard let url else { return }
+        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
     }
 }
 
@@ -108,13 +143,15 @@ private final class TopDownView: NSView {
 /// mockup), and a persistent "Reveal in Finder" row.
 final class GlassFolderView: NSView, NSSearchFieldDelegate {
     static let width: CGFloat = 300
-    static let maxListHeight: CGFloat = 320
+    static let maxListHeight: CGFloat = 340
     /// The mockup's fixed accent blue, used for row selection regardless of
     /// the user's system accent color — matches the approved design exactly.
     static let accentBlue = NSColor(red: 0x0a / 255.0, green: 0x84 / 255.0, blue: 0xff / 255.0, alpha: 1)
 
-    private static let searchAreaHeight: CGFloat = 38
-    private static let revealHeight: CGFloat = 30
+    private static let rowHeight: CGFloat = 30
+    private static let rowSpacing: CGFloat = 32
+    private static let searchAreaHeight: CGFloat = 40
+    private static let revealHeight: CGFloat = 34
 
     private let effectView = NSVisualEffectView()
     private let tintView = NSView()
@@ -203,49 +240,49 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         entryRows = []
         searchField.stringValue = ""
 
-        var y: CGFloat = 6
+        var y: CGFloat = 8
 
         if showsBack {
             let back = FolderRowView(icon: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil),
                                       title: "Back", showsChevron: false, highlightColor: Self.accentBlue)
-            back.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: 26)
+            back.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: Self.rowHeight)
             back.onClick = onBack
             content.addSubview(back)
-            y += 30
+            y += Self.rowSpacing + 4
         }
 
         func addGroup(_ caption: String, _ group: [(title: String, icon: NSImage?, isDirectory: Bool, url: URL)]) {
             guard !group.isEmpty else { return }
             let label = captionLabel(caption)
-            label.frame = NSRect(x: 14, y: y, width: Self.width - 28, height: 14)
+            label.frame = NSRect(x: 16, y: y, width: Self.width - 32, height: 14)
             content.addSubview(label)
-            y += 20
+            y += 22
 
             for entry in group {
                 let row = FolderRowView(icon: entry.icon, title: entry.title, showsChevron: entry.isDirectory,
-                                         highlightColor: Self.accentBlue)
-                row.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: 26)
+                                         highlightColor: Self.accentBlue, url: entry.url)
+                row.frame = NSRect(x: 6, y: y, width: Self.width - 12, height: Self.rowHeight)
                 row.onClick = { onSelect(entry.url, entry.isDirectory) }
                 content.addSubview(row)
                 entryRows.append(row)
-                y += 27
+                y += Self.rowSpacing
             }
-            y += 4
+            y += 6
         }
 
         if entries.isEmpty {
             let empty = NSTextField(labelWithString: "No content")
             empty.font = .systemFont(ofSize: 12)
             empty.textColor = .secondaryLabelColor
-            empty.frame = NSRect(x: 14, y: y + 2, width: Self.width - 28, height: 18)
+            empty.frame = NSRect(x: 16, y: y + 4, width: Self.width - 32, height: 18)
             content.addSubview(empty)
-            y += 24
+            y += 28
         } else {
             addGroup("Folders", entries.filter { $0.isDirectory })
             addGroup("Files", entries.filter { !$0.isDirectory })
         }
 
-        content.frame = NSRect(x: 0, y: 0, width: Self.width, height: y + 4)
+        content.frame = NSRect(x: 0, y: 0, width: Self.width, height: y + 6)
         revealRow.onClick = onReveal
         layoutChrome()
     }
@@ -257,10 +294,10 @@ final class GlassFolderView: NSView, NSSearchFieldDelegate {
         frame = NSRect(x: 0, y: 0, width: Self.width, height: totalHeight)
         effectView.frame = bounds
         tintView.frame = bounds
-        searchField.frame = NSRect(x: 10, y: totalHeight - 32, width: Self.width - 20, height: 22)
+        searchField.frame = NSRect(x: 10, y: totalHeight - 34, width: Self.width - 20, height: 22)
         topSeparator.frame = NSRect(x: 8, y: totalHeight - Self.searchAreaHeight, width: Self.width - 16, height: 1)
         scroll.frame = NSRect(x: 0, y: Self.revealHeight, width: Self.width, height: listHeight)
         bottomSeparator.frame = NSRect(x: 8, y: Self.revealHeight, width: Self.width - 16, height: 1)
-        revealRow.frame = NSRect(x: 6, y: 2, width: Self.width - 12, height: 26)
+        revealRow.frame = NSRect(x: 6, y: 4, width: Self.width - 12, height: Self.rowHeight)
     }
 }

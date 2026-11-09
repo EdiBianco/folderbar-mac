@@ -123,17 +123,20 @@ final class FolderStatusItem: NSObject {
             return
         }
 
-        let keys: [URLResourceKey] = [.nameKey, .contentModificationDateKey, .creationDateKey, .isDirectoryKey]
+        let keys: [URLResourceKey] = [.nameKey, .contentModificationDateKey, .creationDateKey, .isDirectoryKey, .isApplicationKey]
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
 
-        let directories = entries.filter { isDirectory($0) }
-        let files = entries.filter { !isDirectory($0) }
+        // .app bundles are directories on disk, but drilling "into" one to
+        // browse its Contents/ isn't what anyone wants from a quick-launch
+        // list — treat them as openable files, not navigable folders.
+        let directories = entries.filter { isNavigableFolder($0) }
+        let files = entries.filter { !isNavigableFolder($0) }
         let ordered = sort(directories, mode: config.sortMode, reversed: config.reversed)
             + sort(files, mode: config.sortMode, reversed: config.reversed)
 
         let rowData = ordered.map { url in
-            (title: url.lastPathComponent, icon: NSWorkspace.shared.icon(forFile: url.path), isDirectory: isDirectory(url), url: url)
+            (title: url.lastPathComponent, icon: NSWorkspace.shared.icon(forFile: url.path), isDirectory: isNavigableFolder(url), url: url)
         }
 
         glassView.reload(
@@ -154,6 +157,14 @@ final class FolderStatusItem: NSObject {
 
     private func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+    }
+
+    private func isApplication(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isApplicationKey]))?.isApplication ?? false
+    }
+
+    private func isNavigableFolder(_ url: URL) -> Bool {
+        isDirectory(url) && !isApplication(url)
     }
 
     private func sort(_ urls: [URL], mode: SortMode, reversed: Bool) -> [URL] {
